@@ -1,0 +1,15 @@
+{
+  "name": "night-store-validator",
+  "version": "1.0.0",
+  "description": "Account validation bot for Night Store Marketplace",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.106.0",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  }
+}
