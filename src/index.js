@@ -1,13 +1,25 @@
-import 'dotenv/config';
+// Load .env only locally (Railway injects vars automatically)
+try { await import('dotenv/config'); } catch {}
+
 import { createClient } from '@supabase/supabase-js';
 import cron from 'node-cron';
 import { validateAccount } from './validator.js';
 import { log } from './utils.js';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+// ─── Validate env vars ─────────────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ Missing required environment variables:');
+  if (!SUPABASE_URL) console.error('   - SUPABASE_URL');
+  if (!SUPABASE_KEY) console.error('   - SUPABASE_SERVICE_KEY');
+  console.error('');
+  console.error('Available env vars:', Object.keys(process.env).filter(k => !k.startsWith('npm_')).join(', '));
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '10');
 const CHECK_INTERVAL = process.env.CHECK_INTERVAL_MINUTES || '30';
@@ -17,10 +29,6 @@ async function runValidationBatch() {
   log('info', '🔄 Starting validation batch...');
 
   try {
-    // 1. Get accounts that need checking:
-    //    - Never checked (validation_status = 'unchecked')
-    //    - Recheck pending (from purchase trigger)
-    //    - Stale (last_validated_at older than check_interval)
     const cutoff = new Date(Date.now() - parseInt(CHECK_INTERVAL) * 60 * 1000).toISOString();
 
     const { data: accounts, error } = await supabase
@@ -43,7 +51,6 @@ async function runValidationBatch() {
 
     log('info', `📦 Found ${accounts.length} accounts to validate`);
 
-    // 2. Load validation configs
     const { data: configs } = await supabase
       .from('validation_configs')
       .select('*')
@@ -52,14 +59,11 @@ async function runValidationBatch() {
     const configMap = {};
     (configs || []).forEach(c => { configMap[c.category] = c; });
 
-    // 3. Validate each account
     for (const account of accounts) {
       try {
         await processAccount(account, configMap);
       } catch (err) {
         log('error', `Failed to validate account ${account.id}:`, err.message);
-
-        // Mark as error
         await supabase.from('accounts').update({
           validation_status: 'error',
           last_validated_at: new Date().toISOString(),
@@ -91,25 +95,21 @@ async function processAccount(account, configMap) {
 
   log('info', `🔍 Validating [${account.category}] "${account.title}" (${isPurchaseRecheck ? 'PURCHASE RECHECK' : 'routine'})...`);
 
-  // 1. Get previous validation (if exists)
   const { data: prevValidation } = await supabase
     .from('account_validations')
     .select('*')
     .eq('account_id', account.id)
     .maybeSingle();
 
-  // 2. Run the actual validation
   const result = await validateAccount(account, config);
   const duration = Date.now() - startTime;
 
-  // 3. Compare with previous data
   const changes = [];
   let severity = 'none';
 
   if (prevValidation && prevValidation.checked_data) {
     const prev = prevValidation.checked_data;
     const curr = result.checked_data;
-
     const fieldsToCheck = JSON.parse(config.fields_to_check || '[]');
 
     for (const field of fieldsToCheck) {
@@ -119,7 +119,6 @@ async function processAccount(account, configMap) {
       if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
         const change = { field, old: oldVal, new: newVal };
 
-        // Determine severity
         if (['vac_ban', 'trade_ban', 'community_ban', 'game_ban', 'ban_status'].includes(field)) {
           if (newVal === true) {
             change.severity = 'critical';
@@ -147,7 +146,6 @@ async function processAccount(account, configMap) {
       ? 'changed'
       : 'valid';
 
-  // 4. Upsert validation snapshot
   await supabase.from('account_validations').upsert({
     account_id: account.id,
     category: account.category,
@@ -171,7 +169,6 @@ async function processAccount(account, configMap) {
     error_message: result.error || null,
   }, { onConflict: 'account_id' });
 
-  // 5. Write history
   await supabase.from('validation_history').insert({
     account_id: account.id,
     trigger_type: isPurchaseRecheck ? 'purchase' : 'cron',
@@ -186,7 +183,6 @@ async function processAccount(account, configMap) {
     error_message: result.error || null,
   });
 
-  // 6. Update account
   await supabase.from('accounts').update({
     validation_status: status,
     last_validated_at: new Date().toISOString(),
@@ -194,7 +190,6 @@ async function processAccount(account, configMap) {
     validation_severity: severity,
   }).eq('id', account.id);
 
-  // 7. If purchase recheck found changes → notify buyer
   if (isPurchaseRecheck && hasChanges) {
     await notifyBuyerAboutChanges(account, changes, severity);
   }
@@ -207,7 +202,6 @@ async function processAccount(account, configMap) {
 
 // ─── Notify buyer about changes ────────────────────────────────────────────
 async function notifyBuyerAboutChanges(account, changes, severity) {
-  // Find the buyer (latest order)
   const { data: order } = await supabase
     .from('orders')
     .select('buyer_id')
@@ -271,15 +265,13 @@ async function main() {
   log('info', '🌙 Night Store Validator Bot starting...');
   log('info', `📋 Batch size: ${BATCH_SIZE}`);
   log('info', `⏱  Check interval: ${CHECK_INTERVAL} minutes`);
+  log('info', `🔗 Supabase: ${SUPABASE_URL}`);
 
-  // Run first batch immediately
   await runValidationBatch();
 
-  // Start cron job
   cron.schedule(`*/${CHECK_INTERVAL} * * * *`, runValidationBatch);
   log('info', `⏰ Cron scheduled: every ${CHECK_INTERVAL} minutes`);
 
-  // Start realtime listener for immediate purchase rechecks
   startRealtimeListener();
 
   log('info', '🚀 Bot is running!');
