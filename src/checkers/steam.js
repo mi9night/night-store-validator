@@ -11,13 +11,37 @@ export async function checkSteam(account, config) {
   const accountData = account.data || {};
 
   // Try to find Steam ID from various fields
-  let steamId = accountData.steam_id || accountData.steamid || accountData.steamId;
+  let rawSteamInput = accountData.steam_id || accountData.steamid || accountData.steamId || '';
+  let steamId = null;
 
   if (!STEAM_KEY) {
     return { _note: 'steam_api_key_not_configured', vac_ban: false, trade_ban: false };
   }
 
-  // If no direct steam_id, try to resolve from vanity URL or profile link
+  // Parse raw input — could be: SteamID64, vanity URL, full profile link
+  if (rawSteamInput) {
+    const s = String(rawSteamInput).trim();
+    // Full profile URL with SteamID64
+    const profileMatch = s.match(/steamcommunity\.com\/profiles\/(\d+)/);
+    if (profileMatch) {
+      steamId = profileMatch[1];
+    }
+    // Full profile URL with vanity
+    else if (s.match(/steamcommunity\.com\/id\//)) {
+      const vanity = s.match(/steamcommunity\.com\/id\/([^\/\s?]+)/);
+      if (vanity) steamId = await resolveVanityUrl(vanity[1]);
+    }
+    // Raw SteamID64 (17 digits)
+    else if (/^\d{17}$/.test(s)) {
+      steamId = s;
+    }
+    // Assume it's a vanity name
+    else if (s.length > 0 && !s.includes(' ')) {
+      steamId = await resolveVanityUrl(s);
+    }
+  }
+
+  // If still no steamId, scan all data values for Steam links
   if (!steamId) {
     // Check if any field contains a Steam profile URL
     const allValues = Object.values(accountData).map(v => String(v));
