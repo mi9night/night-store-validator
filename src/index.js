@@ -110,7 +110,16 @@ async function processAccount(account, configMap) {
   if (prevValidation && prevValidation.checked_data) {
     const prev = prevValidation.checked_data;
     const curr = result.checked_data;
-    const fieldsToCheck = JSON.parse(config.fields_to_check || '[]');
+    let fieldsToCheck = [];
+    try {
+      const raw = config.fields_to_check || '[]';
+      // Handle both JSON array and comma-separated string
+      if (raw.startsWith('[')) {
+        fieldsToCheck = JSON.parse(raw);
+      } else {
+        fieldsToCheck = raw.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    } catch { fieldsToCheck = []; }
 
     for (const field of fieldsToCheck) {
       const oldVal = prev[field];
@@ -202,9 +211,16 @@ async function processAccount(account, configMap) {
     // Steam
     games_count:     botData.games_count,
     hours:           botData.hours_played,
+    hours_played:    botData.hours_played,
     level:           botData.level,
     rank:            botData.cs2_hours_total ? `CS2: ${botData.cs2_hours_total}ч` : undefined,
+    cs2_hours_total: botData.cs2_hours_total,
+    cs2_hours_2weeks:botData.cs2_hours_2weeks,
     region:          botData.region,
+    account_age_days:botData.account_age_days,
+    vac_bans_count:  botData.vac_bans_count,
+    game_bans_count: botData.game_bans_count,
+    days_since_last_ban: botData.days_since_last_ban,
     prime:           undefined, // Bot can't check prime
     // Roblox
     robux:           botData.robux,

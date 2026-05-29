@@ -43,9 +43,23 @@ export async function checkSteam(account, config) {
     }
   }
 
-  // Still no steamId — try to resolve vanity from steam_id field (user might put username)
+  // Still no steamId — try to resolve from steam_id field
+  // User might put: full URL, vanity name, or steamid64
   if (!steamId && accountData.steam_id) {
-    steamId = await resolveVanityUrl(accountData.steam_id);
+    let input = String(accountData.steam_id).trim();
+    
+    // Extract vanity from full profile URL
+    const vanityFromUrl = input.match(/steamcommunity\.com\/id\/([^\/\s?]+)/);
+    if (vanityFromUrl) {
+      input = vanityFromUrl[1];
+    }
+    // Extract steamid64 from profile URL
+    const idFromUrl = input.match(/steamcommunity\.com\/profiles\/(\d+)/);
+    if (idFromUrl) {
+      steamId = idFromUrl[1];
+    } else {
+      steamId = await resolveVanityUrl(input);
+    }
   }
 
   if (!steamId) {
