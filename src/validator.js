@@ -4,6 +4,7 @@ import { checkMinecraft } from './checkers/minecraft.js';
 import { checkRoblox } from './checkers/roblox.js';
 import { checkTelegram } from './checkers/telegram.js';
 import { checkGeneric } from './checkers/generic.js';
+import { checkEmailAccess } from './checkers/email.js';
 import { log } from './utils.js';
 
 // ─── Router: выбирает нужный чекер по категории ───────────────────────────
@@ -53,6 +54,38 @@ export async function validateAccount(account, config) {
 
   try {
     const result = await checker(account, config);
+
+    // Also check emails if provided in account data
+    const data = account.data || {};
+
+    // Check original email (Родная почта)
+    const origEmail = data['Родная почта'] || data['original_email'];
+    const origPass = data['Пароль от почты'] || data['original_email_password'];
+    if (origEmail && origPass) {
+      const emailResult = await checkEmailAccess(origEmail, origPass);
+      result.original_email_verified = emailResult.email_verified;
+      result.original_email_error = emailResult.email_error || null;
+      result.original_email_server = emailResult.email_server || null;
+    }
+
+    // Check temp email (Временная почта)
+    const tempEmail = data['Временная почта'] || data['temp_email'];
+    const tempPass = data['Пароль от врем. почты'] || data['temp_email_password'];
+    if (tempEmail && tempPass) {
+      const emailResult = await checkEmailAccess(tempEmail, tempPass);
+      result.temp_email_verified = emailResult.email_verified;
+      result.temp_email_error = emailResult.email_error || null;
+    }
+
+    // Check platform-specific emails (Epic, EA, Ubisoft, Rockstar)
+    for (const key of ['epic_email', 'ea_email', 'ubi_email', 'rockstar_email']) {
+      const platformEmail = data[key];
+      // We don't have passwords for these — just note they exist
+      if (platformEmail) {
+        result[`${key}_provided`] = true;
+      }
+    }
+
     return {
       checked_data: result,
       error: null,
