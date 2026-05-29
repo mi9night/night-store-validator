@@ -183,12 +183,75 @@ async function processAccount(account, configMap) {
     error_message: result.error || null,
   });
 
-  await supabase.from('accounts').update({
+  // ─── Auto-fill: overwrite seller's data with real bot data ────────────
+  const accountUpdate = {
     validation_status: status,
     last_validated_at: new Date().toISOString(),
     validation_changes: hasChanges ? changes : [],
     validation_severity: severity,
-  }).eq('id', account.id);
+  };
+
+  // Merge bot-verified data into account.data (real values override seller claims)
+  const existingData = account.data || {};
+  const botData = result.checked_data || {};
+  const correctedData = { ...existingData };
+  let correctedCount = 0;
+
+  // Fields that bot can verify and auto-correct
+  const AUTO_FILL_MAP = {
+    // Steam
+    games_count:     botData.games_count,
+    hours:           botData.hours_played,
+    level:           botData.level,
+    rank:            botData.cs2_hours_total ? `CS2: ${botData.cs2_hours_total}ч` : undefined,
+    region:          botData.region,
+    prime:           undefined, // Bot can't check prime
+    // Roblox
+    robux:           botData.robux,
+    friends_count:   botData.friends_count,
+    followers_count: botData.followers_count,
+    // Discord
+    nitro:           botData.nitro_status ? 'full' : undefined,
+    badges:          botData.badges?.join(', '),
+    // Minecraft  
+    cape:            botData.cape,
+    // Telegram
+    subscribers:     botData.members_count,
+    tg_premium:      botData.premium,
+    // Email verification
+    original_email_verified: botData.original_email_verified,
+    temp_email_verified:     botData.temp_email_verified,
+  };
+
+  for (const [key, botVal] of Object.entries(AUTO_FILL_MAP)) {
+    if (botVal === undefined || botVal === null) continue;
+
+    const sellerVal = existingData[key];
+
+    // If seller provided a value and bot found a different one — correct it
+    if (sellerVal !== undefined && sellerVal !== null && String(sellerVal) !== String(botVal)) {
+      log('info', `  🔄 Auto-correct: ${key}: "${sellerVal}" → "${botVal}"`);
+      correctedData[key] = botVal;
+      correctedCount++;
+    }
+    // If seller didn't provide it but bot found it — auto-fill
+    else if (sellerVal === undefined || sellerVal === null || sellerVal === '') {
+      log('info', `  📝 Auto-fill: ${key} = "${botVal}"`);
+      correctedData[key] = botVal;
+      correctedCount++;
+    }
+  }
+
+  // Also update direct account fields
+  if (botData.games_count != null) accountUpdate.games_count = botData.games_count;
+
+  // Save corrected data
+  if (correctedCount > 0) {
+    accountUpdate.data = correctedData;
+    log('info', `  ✏️ Corrected ${correctedCount} fields in account data`);
+  }
+
+  await supabase.from('accounts').update(accountUpdate).eq('id', account.id);
 
   if (isPurchaseRecheck && hasChanges) {
     await notifyBuyerAboutChanges(account, changes, severity);
